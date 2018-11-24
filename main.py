@@ -25,7 +25,22 @@ import scipy.signal as signal
 
 
 ################################### Imports End ###################################
+### comparison###
+def compare(skeletonPoints,skeletonCenter,objectPoints,objectCenter):
 
+    if (skeletonPoints.shape[0]!=objectPoints.shape[0]):
+        return  False
+    else:
+        skeletonDeltaXY = np.subtract(skeletonPoints, skeletonCenter)
+        objectDeltaXY = np.subtract(objectPoints, objectCenter)
+        skeletonAngle = np.rad2deg(np.arctan2(skeletonDeltaXY[:,1],skeletonDeltaXY[:,0]))
+        objectAngle =  np.rad2deg(np.arctan2(objectDeltaXY[:,1],objectDeltaXY[:,0]))
+        comparison =  np.logical_and(skeletonAngle<=objectAngle+10, skeletonAngle>=objectAngle-10)
+        if(np.sum(comparison)==skeletonPoints.shape[0]):
+            return True
+        else:
+            return False
+### skeleton points and object points must be np.array with size x,2   while center must np.array with size 1,2 or list of 2 elements###
 
 
 
