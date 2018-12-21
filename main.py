@@ -49,7 +49,7 @@ def compare(skeletonPoints,skeletonCenter,objectPoints,objectCenter):
         objectDeltaXY = np.subtract(objectPoints, objectCenter)
         skeletonAngle = np.rad2deg(np.arctan2(skeletonDeltaXY[:,1],skeletonDeltaXY[:,0]))
         objectAngle =  np.rad2deg(np.arctan2(objectDeltaXY[:,1],objectDeltaXY[:,0]))
-        comparison =  np.logical_and(skeletonAngle<=objectAngle+40, skeletonAngle>=objectAngle-40)
+        comparison =  np.logical_and(skeletonAngle<=objectAngle+20, skeletonAngle>=objectAngle-20)
         if(np.sum(comparison)==skeletonPoints.shape[0]):
             return True
         else:
@@ -103,8 +103,6 @@ def startGameInterface():
     #### Start Loop ######
     window.mainloop()
 
-
-
 ######################### Function Game Interface #######################
 def makeSureBackGroundClearConfirm():
 
@@ -141,8 +139,6 @@ def makeSureBackGroundClearConfirm():
     cv2.destroyAllWindows()
     videoCam.release()
 
-
-
 def getSkeletonParts (pickedPeaks):
     rightHand = np.array(pickedPeaks[np.argmax(pickedPeaks[:, 0])])
     pickedPeaks = np.delete(pickedPeaks, np.argmax(pickedPeaks[:, 0]), axis=0)
@@ -151,7 +147,6 @@ def getSkeletonParts (pickedPeaks):
     leg = np.array(pickedPeaks[np.argmax(pickedPeaks[:, 1])])
     head = np.delete(pickedPeaks, np.argmax(pickedPeaks[:, 1]), axis=0).flatten()
     return np.array([rightHand,leftHand,leg,head])
-
 
 ##### Function Calculate Distance and average nearby by points ##########
 def averageMaximaPoints(chosenMaximaXIndeces,chosenMaximaYIndeces, distSize):
@@ -187,7 +182,8 @@ def getOuterContour(contours,image):
     outer_contours = max(contour_sizes, key=lambda x: x[0])[1]
 
     cv2.drawContours(image, outer_contours, -1, (0, 255, 0), 3)
-    cv2.imshow("original video with outer contours", image)
+    if debugMode:
+        cv2.imshow("original video with outer contours", image)
 
     outer_contours = np.array(outer_contours)
     outer_contours = np.reshape(outer_contours, (outer_contours.shape[0], 2))
@@ -212,7 +208,8 @@ def getPeaks(processedImage, background, diffThreshHoldConst, originalImage, cut
         dilationFilter = np.ones((5, 5), np.uint8)
         erosionVid = cv2.erode(diffThreshold, dilationFilter, iterations=0)
         dilationVid = cv2.dilate(erosionVid, dilationFilter, iterations=0)
-        cv2.imshow("3 After Erosion+Dilation", dilationVid)
+        if debugMode:
+            cv2.imshow("3 After Erosion+Dilation", dilationVid)
 
         processedImage = np.array(1 - dilationVid).astype('uint8')
         processedImage[processedImage == 1] = 255
@@ -260,7 +257,7 @@ def getPeaks(processedImage, background, diffThreshHoldConst, originalImage, cut
                     for iPoint in range(pickedPeaks.shape[0]):
                         cv2.circle(originalImage, (int(pickedPeaks[iPoint, 0]), int(pickedPeaks[iPoint, 1])), 5, (0, 0, 255), -1)
 
-                    cv2.imshow("With Circle inside function ", originalImage)
+                    cv2.imshow("With Circle "+ ' for '+ str(isVideoFrame), np.fliplr(originalImage))
 
                 # plt.draw()
                 # plt.pause(0.001)
@@ -271,6 +268,7 @@ def getPeaks(processedImage, background, diffThreshHoldConst, originalImage, cut
 
 def getFixedImagesPeaks(images, bgFilename, blurFactor, diffThreshHoldConst, cutOffFreq):
     peaks = np.zeros((len(images),4,2))
+    humanCenters = np.zeros((len(images), 2))
     background = np.array(cv2.imread(bgFilename))
     background = cv2.resize(background, (int(background.shape[0] / 2), int(background.shape[1] / 2)))
     background = preprocessImage(background, blurFactor)
@@ -279,11 +277,12 @@ def getFixedImagesPeaks(images, bgFilename, blurFactor, diffThreshHoldConst, cut
         image = np.array(cv2.imread(imgFilename))
 
         image = cv2.resize(image, (int(image.shape[0] / 2), int(image.shape[1] / 2)))
-        cv2.imshow("1 Original inside function", image)
+        if debugMode:
+            cv2.imshow("1 Original inside function", image)
         processed_img = preprocessImage(image, blurFactor)
-        peaks[index], humanCenter = getPeaks(processed_img, background, diffThreshHoldConst, image, cutOffFreq, False)
+        peaks[index], humanCenters[index] = getPeaks(processed_img, background, diffThreshHoldConst, image, cutOffFreq, False)
 
-    return peaks
+    return peaks,humanCenters
 
 def preprocessImage(img, blurFactor):
     modified_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -312,10 +311,11 @@ def main():
     global debugMode
 
     #################### plot ####################
-    plt.ion()
-    plt.show()
+    if debugMode:
+        plt.ion()
+        plt.show()
 
-    fixedPeaks = getFixedImagesPeaks(['fig.jpg'], 'bg.jpg', blurFactor, diffThreshHoldConst, cutOffFreq)
+    fixedPeaks, fixedCenters = getFixedImagesPeaks(['fig.jpg'], 'bg.jpg', blurFactor, diffThreshHoldConst, cutOffFreq)
 
     prevFrame = originalVid.copy()
     prevGrayImg = cv2.cvtColor(prevFrame, cv2.COLOR_BGR2GRAY)
@@ -341,7 +341,7 @@ def main():
         blurredGrayImg = cv2.GaussianBlur(grayImg, (blurFactor, blurFactor), 0)
         peaks, humanCenter = getPeaks(blurredGrayImg, prevGrayImg, diffThreshHoldConst, originalVid, cutOffFreq, isVideoFrame=True)
         if peaks is not None and peaks.shape[0] >= 4:
-            if compare(peaks, humanCenter,np.array([[800,500],[112,161], [201,468],[316.5, 108]]), np.array([311, 249])):
+            if compare(peaks, humanCenter,fixedPeaks[0], fixedCenters[0]):
                 print("Matching!!")
             else:
                 print("Not matching. :(")
