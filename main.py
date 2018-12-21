@@ -36,12 +36,11 @@ def getKMeans(peaks, k=5):
     kmeans = cluster.KMeans(n_clusters=k, random_state=0)
     kmeans.fit(peaks)
     return kmeans.cluster_centers_
-    # labels = kmeans.labels_
 
 ######################### Function Compare ##############################
 def compare(skeletonPoints,skeletonCenter,objectPoints,objectCenter):
-    print("skeleton shape is " , skeletonPoints.shape)
-    print("object shape is " , objectPoints.shape)
+    # print("skeleton shape is " , skeletonPoints.shape)
+    # print("object shape is " , objectPoints.shape)
     if (skeletonPoints.shape[0]!=objectPoints.shape[0]):
         print("Different sizes")
         return  False
@@ -50,7 +49,7 @@ def compare(skeletonPoints,skeletonCenter,objectPoints,objectCenter):
         objectDeltaXY = np.subtract(objectPoints, objectCenter)
         skeletonAngle = np.rad2deg(np.arctan2(skeletonDeltaXY[:,1],skeletonDeltaXY[:,0]))
         objectAngle =  np.rad2deg(np.arctan2(objectDeltaXY[:,1],objectDeltaXY[:,0]))
-        comparison =  np.logical_and(skeletonAngle<=objectAngle+70, skeletonAngle>=objectAngle-70)
+        comparison =  np.logical_and(skeletonAngle<=objectAngle+40, skeletonAngle>=objectAngle-40)
         if(np.sum(comparison)==skeletonPoints.shape[0]):
             return True
         else:
@@ -144,6 +143,16 @@ def makeSureBackGroundClearConfirm():
 
 
 
+def getSkeletonParts (pickedPeaks):
+    rightHand = np.array(pickedPeaks[np.argmax(pickedPeaks[:, 0])])
+    pickedPeaks = np.delete(pickedPeaks, np.argmax(pickedPeaks[:, 0]), axis=0)
+    leftHand = np.array(pickedPeaks[np.argmin(pickedPeaks[:, 0])])
+    pickedPeaks = np.delete(pickedPeaks, np.argmin(pickedPeaks[:, 0]), axis=0)
+    leg = np.array(pickedPeaks[np.argmax(pickedPeaks[:, 1])])
+    head = np.delete(pickedPeaks, np.argmax(pickedPeaks[:, 1]), axis=0).flatten()
+    return np.array([rightHand,leftHand,leg,head])
+
+
 ##### Function Calculate Distance and average nearby by points ##########
 def averageMaximaPoints(chosenMaximaXIndeces,chosenMaximaYIndeces, distSize):
     resultArrayX = []
@@ -173,12 +182,109 @@ def averageMaximaPoints(chosenMaximaXIndeces,chosenMaximaYIndeces, distSize):
 
     return resultArrayX , resultArrayY
 
-# def getKmeans(contours):
+def getOuterContour(contours,image):
+    contour_sizes = [(cv2.contourArea(contour), contour) for contour in contours]
+    outer_contours = max(contour_sizes, key=lambda x: x[0])[1]
 
+    cv2.drawContours(image, outer_contours, -1, (0, 255, 0), 3)
+    cv2.imshow("original video with outer contours", image)
+
+    outer_contours = np.array(outer_contours)
+    outer_contours = np.reshape(outer_contours, (outer_contours.shape[0], 2))
+
+    return outer_contours
+
+def getPeaks(processed_img, background, diffThreshHoldConst, image, cutOffFreq):
+    (score, diffThreshold) = compare_ssim(processed_img, background, full=True)
+    if (debugMode):
+        cv2.imshow("2 Difference", diffThreshold)
+
+    ############# Dilation + Erosion #############
+    # Threshold
+
+    diffThreshold[diffThreshold < diffThreshHoldConst] = 255
+    diffThreshold[diffThreshold != 255] = 0
+    # diffThreshold=np.array(diffThreshold).astype('uint8')
+
+    if (debugMode):
+        cv2.imshow("2' Diff After Thrshold inside function", diffThreshold)
+
+    diffThreshold = np.array(diffThreshold).astype('uint8')
+
+    _, contours, _ = cv2.findContours(diffThreshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    outer_contours = np.zeros((0, 0))
+    if len(contours) > 0:
+
+        outer_contours = getOuterContour(contours, image)
+
+        if outer_contours.shape[0] > 1:
+            humanCenter = np.average(outer_contours, axis=0).reshape((1, 2)).astype('int')
+            cv2.circle(image, (humanCenter[0, 0], humanCenter[0, 1]), 5, (0, 255, 0), -1)
+            distance = cdist(humanCenter, outer_contours, metric='euclidean')
+            xAxis = np.linspace(0, (distance.shape[1]) - 1, distance.shape[1])
+            # plt.plot(xAxis,distance)
+
+            # filter order , cutoff , type
+            b, a = signal.butter(1, cutOffFreq)
+            output_signal = np.transpose(signal.filtfilt(b, a, distance)).flatten()
+
+            #################### plot & Draw New Points ####################
+            if len(distance) != 0:
+                if (debugMode):
+                    plt.plot(xAxis, output_signal)
+
+                ## Local Maximum Array of True & Falses
+                localMaximaTrueFalse = np.r_[True, output_signal[1:] > output_signal[:-1]] & np.r_[
+                    output_signal[:-1] > output_signal[1:], True]
+                ## Get Indices of Local Maxima Values
+                LocalMaximaIndices = np.array(np.where(localMaximaTrueFalse))[0]
+
+                if (debugMode):
+                    for localMaximaIndex in LocalMaximaIndices:
+                        plt.plot(xAxis[localMaximaIndex], output_signal[localMaximaIndex], marker='o')
+
+                pickedPeaks = np.array(getKMeans(outer_contours[LocalMaximaIndices], k=4))
+
+
+
+                # print("peaks = ", peaks)
+                for iPoint in range(pickedPeaks.shape[0]):
+                    cv2.circle(image, (int(pickedPeaks[iPoint, 0]), int(pickedPeaks[iPoint, 1])), 5, (0, 0, 255), -1)
+
+                cv2.imshow("With Circle inside function ", image)
+
+                # plt.draw()
+                # plt.pause(0.001)
+                # plt.gcf().clear()
+                # cv2.imshow("6 Skeleton All Points", image)
+                # print("Object center is ", humanCenter)
+    return pickedPeaks
+
+def getFixedImagesPeaks(images, bgFilename, blurFactor, diffThreshHoldConst, cutOffFreq):
+    peaks = np.zeros((len(images),4,2))
+    background = np.array(cv2.imread(bgFilename))
+    background = cv2.resize(background, (int(background.shape[0] / 2), int(background.shape[1] / 2)))
+    background = preprocessfixedImage(background, blurFactor)
+
+    for index, imgFilename in enumerate(images):
+        image = np.array(cv2.imread(imgFilename))
+
+        image = cv2.resize(image, (int(image.shape[0] / 2), int(image.shape[1] / 2)))
+        cv2.imshow("1 Original inside function", image)
+        processed_img = preprocessfixedImage(image, blurFactor)
+        peaks[index] = getPeaks(processed_img, background, diffThreshHoldConst, image, cutOffFreq)
+
+    return peaks
+
+def preprocessfixedImage(img, blurFactor):
+    modified_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    modified_img = cv2.GaussianBlur(modified_img, (blurFactor, blurFactor), 0)
+    return modified_img
 
 ######################### Function Main Game #######################
 def main():
     videoCam = cv2.VideoCapture(0)
+    originalVid = []
     # Check web cam is working
     if videoCam.isOpened():
         ret, originalVid = videoCam.read()
@@ -194,20 +300,21 @@ def main():
     dilationIterations = 0
     minRatioInImg = 500  #1771 #2234 #100
     BackgroundExtraction = 1    # 0=temporal Difference. 1=background Extraction
-    global debugMode;
+    global debugMode
+
+    plt.ion()
+    plt.show()
+    getFixedImagesPeaks(['fig.jpg'], 'bg.jpg', blurFactor, diffThreshHoldConst, cutOffFreq)
 
     prevFrame = originalVid.copy()
-    # prevFrame = cv2.imread("bg.jpg")
-    # prevFrame = np.array(prevFrame)
-    # prevFrame = cv2.resize(prevFrame, (int(prevFrame.shape[0] / 2), int(prevFrame.shape[1] / 2)))
-
+    prevFrame = np.array(io.imread('bg.jpg'))
+    prevFrame = cv2.resize(prevFrame, (int(prevFrame.shape[0] / 2), int(prevFrame.shape[1] / 2)))
     prevGrayImg = cv2.cvtColor(prevFrame, cv2.COLOR_BGR2GRAY)
     prevGrayImg = cv2.GaussianBlur(prevGrayImg, (blurFactor, blurFactor), 0)
     # bckExtractor=cv2.createBackgroundSubtractorMOG2()   # Remove Later if not used
 
     #################### plot ####################
-    plt.ion()
-    plt.show()
+
 
     ################################### Frame Processing Starts ###################################
     while ret:
@@ -220,9 +327,9 @@ def main():
         ############# Show Original Cam #############
         ret, originalVid = videoCam.read()
 #       ret = True
-#        originalVid = cv2.imread('fig.jpg')
-#        originalVid = np.array(originalVid)
-#        originalVid = cv2.resize(originalVid, (int(originalVid.shape[0]/2), int(originalVid.shape[1]/2)))
+        originalVid = cv2.imread('fig.jpg')
+        originalVid = np.array(originalVid)
+        originalVid = cv2.resize(originalVid, (int(originalVid.shape[0]/2), int(originalVid.shape[1]/2)))
         if(debugMode):
             cv2.imshow("1 Original", originalVid)
 
@@ -246,7 +353,7 @@ def main():
         dilationFilter = np.ones((5, 5), np.uint8)
         erosionVid = cv2.erode(diffThreshold, dilationFilter, iterations=eriosionIterations)
         dilationVid = cv2.dilate(erosionVid, dilationFilter, iterations=dilationIterations)
-        cv2.imshow("3 After Erosion+Dilaition", dilationVid)
+        cv2.imshow("3 After Erosion+Dilation", dilationVid)
 
 
         #### Contoursss
@@ -260,19 +367,19 @@ def main():
         img[img==1]=255
 
         im2, contours, hierarchy = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        biggest_contour=np.zeros((0,0))
+        outer_contours=np.zeros((0,0))
         if len(contours)>0:
             contour_sizes = [(cv2.contourArea(contour), contour) for contour in contours]
-            biggest_contour = max(contour_sizes, key=lambda x: x[0])[1]
+            outer_contours = max(contour_sizes, key=lambda x: x[0])[1]
 
-            cv2.drawContours(originalVid, biggest_contour, -1, (0, 255, 0), 3)
-            cv2.imshow("hy5rogo mn ghery ", originalVid)
+            cv2.drawContours(originalVid, outer_contours, -1, (0, 255, 0), 3)
+            cv2.imshow("original video with outer contours", originalVid)
 
-            biggest_contour = np.array(biggest_contour)
-            biggest_contour = np.reshape(biggest_contour, (biggest_contour.shape[0], 2))
-            # print(biggest_contour)
+            outer_contours = np.array(outer_contours)
+            outer_contours = np.reshape(outer_contours, (outer_contours.shape[0], 2))
+            # print(outer_contours)
 
-        # Show Canny Edge Detection         #TODO: change to border tracing
+        # Show Canny Edge Detection
         # edgeDetection2 = cv2.Canny(np.uint8(dilationVid*255), 30, 100)
         # edgeDetection2 = invert(edgeDetection2)
         # cv2.imshow("4 Border", edgeDetection2)
@@ -288,17 +395,15 @@ def main():
 
             # Get Human Center and show if there is someone in the image
             #  if len(contourIndices[0]) != 0:
-            if biggest_contour.shape[0] > 1:
-               # humanCenter = [int(np.average(biggest_contour[0])),int(np.average(biggest_contour[1]))]
-                humanCenter = np.average(biggest_contour,axis=0).reshape((1,2)).astype('int')
+            if outer_contours.shape[0] > 1:
+                humanCenter = np.average(outer_contours,axis=0).reshape((1,2)).astype('int')
                 cv2.circle(originalVid, (humanCenter[0,0], humanCenter[0,1]), 5, (0, 255, 0), -1)
                 # cv2.line(skeletonFormRGB, (humanCenter[1], humanCenter[0]), (point2[0], point2[1]), (255, 0, 0), 2)  # Use this to Draw Line between two points
                 # cv2.imshow("5 Skeleton", skeletonFormRGB)
                 # distance = np.sqrt(np.power(humanCenter[0] - contourIndices[0], 2) + np.power(humanCenter[1] - contourIndices[1], 2))
-                distance = cdist(humanCenter, biggest_contour, metric='euclidean')
+                distance = cdist(humanCenter, outer_contours, metric='euclidean')
 
-                xAxis = np.linspace(0, len(distance) - 1, len(distance))
-                cv2.imshow("With Circle ",originalVid)
+                xAxis = np.linspace(0, distance.shape[1] - 1, distance.shape[1])
                 #plt.plot(xAxis,distance)
 
                 # filter order , cutoff , type
@@ -307,8 +412,8 @@ def main():
 
                 #################### plot & Draw New Points ####################
                 if len(distance) != 0:
-                    if (debugMode):
-                        plt.plot(xAxis, output_signal)
+                #     if (debugMode):
+                #         plt.plot(xAxis, output_signal)
 
                     ## Local Maximum Array of True & Falses
                     localMaximaTrueFalse = np.r_[True, output_signal[1:] > output_signal[:-1]] & np.r_[output_signal[:-1] > output_signal[1:], True]
@@ -320,43 +425,41 @@ def main():
                     LocalMaximaIndices = (np.array(np.where(localMaximaTrueFalse)))
                     LocalMaximaIndices = LocalMaximaIndices[0]  #LocalMaximaIndices[::]
 
-                    if (debugMode):
-                        for localMaximaIndex in LocalMaximaIndices:
-                            plt.plot(xAxis[localMaximaIndex], output_signal[localMaximaIndex], marker = 'o')
+                    # if (debugMode):
+                    for localMaximaIndex in LocalMaximaIndices:
+                        plt.plot(xAxis[localMaximaIndex], output_signal[localMaximaIndex], marker = 'o')
 
                     # Choose Center of Points through avg maxima indices
-                    chosenMaximaXIndeces = biggest_contour[LocalMaximaIndices][:,0]
-                    chosenMaximaYIndeces = biggest_contour[LocalMaximaIndices][:,1]
+                    chosenMaximaXIndeces = outer_contours[LocalMaximaIndices][:,0]
+                    chosenMaximaYIndeces = outer_contours[LocalMaximaIndices][:,1]
 
-                    pickedPeaks = np.array(getKMeans(biggest_contour[LocalMaximaIndices], k=4))
+                    pickedPeaks = np.array(getKMeans(outer_contours[LocalMaximaIndices], k=4))
                     print("Current picked peaks \n" , pickedPeaks)
                     averagePeakPointsX, averagePeakPointsY = averageMaximaPoints(chosenMaximaXIndeces, chosenMaximaYIndeces, distanceSize)
 
                     for iPoint in range(pickedPeaks.shape[0]):
                         cv2.circle(originalVid, (int(pickedPeaks[iPoint,0]), int(pickedPeaks[iPoint,1])), 5, (0, 0, 255), -1)
 
+                    # cv2.imshow("With Circle ",originalVid)
                     # for iPoint in len(averagePeakPointsX):
                     #     cv2.circle(originalVid, (int(averagePeakPointsX[iPoint]), int(averagePeakPointsY[iPoint])), 5,
                     #                (255, 255, 255), -1)
                     print("Object center is ", humanCenter)
-                    # if pickedPeaks.shape[0] >= 4:
-                    #     rightHand = np.array(pickedPeaks[np.argmax(pickedPeaks[:,0])])
-                    #     pickedPeaks = np.delete(pickedPeaks,np.argmax(pickedPeaks[:,0]))
-                    #     print("current picked peaks ", pickedPeaks)
-                    #     leftHand = np.array(pickedPeaks[np.argmin(pickedPeaks[:,0])])
-                    #     pickedPeaks = np.delete(pickedPeaks, np.argmin(pickedPeaks[:,0]))
-                    #     print("current picked peaks ", pickedPeaks)
-                    #     leg = np.array(pickedPeaks[np.argmax(pickedPeaks[:,1])])
-                    #     pickedPeaks = np.delete(pickedPeaks, np.argmax(pickedPeaks[:,1]))
-                    #     print("current picked peaks ", pickedPeaks)
-                    #     head = pickedPeaks
-                    #     print(rightHand, leftHand, leg, head)
-                    #
-                    #     if compare(np.array([rightHand, leftHand, leg, head]).reshape((4,2)), humanCenter,np.array([[476,245],[112,161], [201,468],[316.5, 108]]), np.array([311, 249])):
-                    #
-                    #         print("Matching!!")
-                    #     else:
-                    #         print("Not matching. :(")
+                    if pickedPeaks.shape[0] >= 4:
+                        rightHand = np.array(pickedPeaks[np.argmax(pickedPeaks[:, 0])])
+                        pickedPeaks = np.delete(pickedPeaks, np.argmax(pickedPeaks[:, 0]), axis=0)
+                        leftHand = np.array(pickedPeaks[np.argmin(pickedPeaks[:, 0])])
+                        pickedPeaks = np.delete(pickedPeaks, np.argmin(pickedPeaks[:, 0]), axis=0)
+                        leg = np.array(pickedPeaks[np.argmax(pickedPeaks[:, 1])])
+                        head = np.delete(pickedPeaks, np.argmax(pickedPeaks[:, 1]), axis=0).flatten()
+                        # print("current picked peaks ", pickedPeaks)
+                        print(rightHand, leftHand, leg, head)
+
+                        if compare(np.array([rightHand, leftHand, leg, head]).reshape((4,2)), humanCenter,np.array([[800,500],[112,161], [201,468],[316.5, 108]]), np.array([311, 249])):
+
+                            print("Matching!!")
+                        else:
+                            print("Not matching. :(")
                         if (debugMode):
                             plt.draw()
                             plt.pause(0.001)
