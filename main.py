@@ -2,23 +2,13 @@ import scipy
 
 import cv2
 import numpy as np
-import skimage.io as io
-from scipy.signal import convolve2d
-from skimage.filters import threshold_otsu
+import glob
+from PIL import Image as Imagee
 
-from skimage import morphology, color
+import random
 import matplotlib.pyplot as plt
 
-# For skeletonization
-from skimage.morphology import skeletonize
-from skimage import data
-from skimage.util import invert
-
-#import imutils
-import argparse
 from skimage.measure import compare_ssim
-from matplotlib.patches import Circle
-
 
 from tkinter import *
 from tkinter.ttk import Progressbar
@@ -28,7 +18,13 @@ import scipy.signal as signal
 import time
 from scipy.spatial.distance import euclidean,cdist
 from sklearn import cluster
+
+# All song credit goes to Nintendo.
+import winsound
+winsound.PlaySound("bgmusic.wav", winsound.SND_ASYNC | winsound.SND_ALIAS | winsound.SND_LOOP )
+
 ################################### Imports End ###################################
+
 
 #########################Function KMeans############################
 def getKMeans(peaks, k=5):
@@ -43,8 +39,10 @@ def compare(skeletonPoints,skeletonCenter,objectPoints,objectCenter):
     # print("object shape is " , objectPoints.shape)
     if (skeletonPoints.shape[0]!=objectPoints.shape[0]):
         print("Different sizes")
-        return  False
+        return False
     else:
+        # skeletonPoints.delete(2)
+        # objectPoints.delete(2)
         skeletonDeltaXY = np.subtract(skeletonPoints, skeletonCenter)
         objectDeltaXY = np.subtract(objectPoints, objectCenter)
         skeletonAngle = np.rad2deg(np.arctan2(skeletonDeltaXY[:,1],skeletonDeltaXY[:,0]))
@@ -183,14 +181,29 @@ def getOuterContour(contours,image):
 
     cv2.drawContours(image, outer_contours, -1, (0, 255, 0), 3)
     if debugMode:
-        cv2.imshow("original video with outer contours", image)
+        cv2.imshow("4: original video with outer contours drawn", image)
 
     outer_contours = np.array(outer_contours)
     outer_contours = np.reshape(outer_contours, (outer_contours.shape[0], 2))
 
     return outer_contours
 
-def getPeaks(processedImage, background, diffThreshHoldConst, originalImage, cutOffFreq, isVideoFrame=True):
+def printOnScreen(originalVid, t ,score):
+    fontColor = (255, 255, 255);
+    fontScale = 1;
+    lineType = 2;
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    textPositionOriginal = (60, 100)
+
+    timeText = "Time Left " + str(int(t))
+    scoreText="Score "+str(score)
+    timePosition = textPositionOriginal
+    scorePosition=(60,150)
+    cv2.putText(originalVid, timeText, timePosition, font, fontScale, fontColor, lineType)
+    cv2.putText(originalVid, scoreText, scorePosition, font, fontScale, fontColor, lineType)
+
+
+def getPeaks(processedImage, background, diffThreshHoldConst, originalImage, cutOffFreq, isVideoFrame=True, index = -1 , name="Camera", drawImage=True):
     pickedPeaks = None
     humanCenter = None
     (score, diffThreshold) = compare_ssim(processedImage, background, full=True)
@@ -200,14 +213,14 @@ def getPeaks(processedImage, background, diffThreshHoldConst, originalImage, cut
     ############# Dilation + Erosion #############
     # Threshold
     if isVideoFrame:
-        diffThreshold[diffThreshold < diffThreshHoldConst] = 0;
-        diffThreshold[diffThreshold > diffThreshHoldConst] = 1;
+        diffThreshold[diffThreshold < diffThreshHoldConst] = 0
+        diffThreshold[diffThreshold > diffThreshHoldConst] = 1
         if (debugMode):
             cv2.imshow("2' Diff After Threshold", diffThreshold)
         # Erosion + Dilation. Erosion to fill holes with black
         dilationFilter = np.ones((5, 5), np.uint8)
-        erosionVid = cv2.erode(diffThreshold, dilationFilter, iterations=0)
-        dilationVid = cv2.dilate(erosionVid, dilationFilter, iterations=0)
+        erosionVid = cv2.erode(diffThreshold, dilationFilter, iterations=4)
+        dilationVid = cv2.dilate(erosionVid, dilationFilter, iterations=3)
         if debugMode:
             cv2.imshow("3 After Erosion+Dilation", dilationVid)
 
@@ -233,7 +246,10 @@ def getPeaks(processedImage, background, diffThreshHoldConst, originalImage, cut
 
             # filter order , cutoff , type
             b, a = signal.butter(1, cutOffFreq)
-            output_signal = np.transpose(signal.filtfilt(b, a, distance)).flatten()
+            try:
+                output_signal = np.transpose(signal.filtfilt(b, a, distance)).flatten()
+            except:
+                return None,None
 
             #################### plot & Draw New Points ####################
             if len(distance) != 0:
@@ -257,8 +273,27 @@ def getPeaks(processedImage, background, diffThreshHoldConst, originalImage, cut
                     for iPoint in range(pickedPeaks.shape[0]):
                         cv2.circle(originalImage, (int(pickedPeaks[iPoint, 0]), int(pickedPeaks[iPoint, 1])), 5, (0, 0, 255), -1)
 
-                    cv2.imshow("With Circle "+ ' for '+ str(isVideoFrame), np.fliplr(originalImage))
+                    if isVideoFrame:  #IF original video
+                        # Head Body
+                        cv2.line(originalImage, (int(pickedPeaks[3][0]), int(pickedPeaks[3][1])),
+                                 (int(humanCenter[0][0]), int(humanCenter[0][1])), (255, 0, 0), 1)
+                        # Left Body
+                        cv2.line(originalImage, (int(pickedPeaks[1][0]), int(pickedPeaks[1][1])),
+                                 (int(humanCenter[0][0]), int(humanCenter[0][1])), (255, 0, 0), 1)
+                        # Right Body
+                        cv2.line(originalImage, (int(pickedPeaks[0][0]), int(pickedPeaks[0][1])),
+                                 (int(humanCenter[0][0]), int(humanCenter[0][1])), (255, 0, 0), 1)
+                        # Leg Body
+                        cv2.line(originalImage, (int(pickedPeaks[2][0]), int(pickedPeaks[2][1])),
+                                 (int(humanCenter[0][0]), int(humanCenter[0][1])), (255, 0, 0), 1)
+                    else:   # If showing frame
+                        originalImage = cv2.resize(originalImage, (0,0), fx=0.25, fy=0.25)
 
+                    if drawImage:
+                        cv2.imshow("My Program"+str(isVideoFrame), np.fliplr(originalImage))
+
+                    # if not isVideoFrame:
+                    #     cv2.imwrite("Contoured "+str(index)+ ".png", originalImage)
                 # plt.draw()
                 # plt.pause(0.001)
                 # plt.gcf().clear()
@@ -266,21 +301,22 @@ def getPeaks(processedImage, background, diffThreshHoldConst, originalImage, cut
                 # print("Object center is ", humanCenter)
     return pickedPeaks, humanCenter
 
-def getFixedImagesPeaks(images, bgFilename, blurFactor, diffThreshHoldConst, cutOffFreq):
+def getFixedImagesPeaks(images, bgFilename, blurFactor, diffThreshHoldConst, cutOffFreq,drawImageinput=True):
     peaks = np.zeros((len(images),4,2))
     humanCenters = np.zeros((len(images), 2))
     background = np.array(cv2.imread(bgFilename))
-    background = cv2.resize(background, (int(background.shape[0] / 2), int(background.shape[1] / 2)))
+    newSize = int(background.shape[0]/2)
+    background = cv2.resize(background, (newSize,newSize))
     background = preprocessImage(background, blurFactor)
 
     for index, imgFilename in enumerate(images):
         image = np.array(cv2.imread(imgFilename))
 
-        image = cv2.resize(image, (int(image.shape[0] / 2), int(image.shape[1] / 2)))
+        image = cv2.resize(image, (newSize,newSize))
         if debugMode:
             cv2.imshow("1 Original inside function", image)
         processed_img = preprocessImage(image, blurFactor)
-        peaks[index], humanCenters[index] = getPeaks(processed_img, background, diffThreshHoldConst, image, cutOffFreq, False)
+        peaks[index], humanCenters[index] = getPeaks(processed_img, background, diffThreshHoldConst, image, cutOffFreq, False, index,drawImage=drawImageinput)
 
     return peaks,humanCenters
 
@@ -288,6 +324,99 @@ def preprocessImage(img, blurFactor):
     modified_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     modified_img = cv2.GaussianBlur(modified_img, (blurFactor, blurFactor), 0)
     return modified_img
+
+
+def drawFunction(originalVid,peaks,humanCenter):
+    return
+
+    if peaks is None or humanCenter is None:
+        return
+    displayedScreen = np.zeros((originalVid.shape[0], originalVid.shape[1], 3), np.uint8)
+    displayedScreen[:, 0:originalVid.shape[1]] = (255, 255, 255)
+
+    # displayedScreen = originalVid.copy()
+
+    #
+    # # Right Hand
+    # handSide = [[int(peaks[0][0]), int(peaks[0][1] - 20)], [int(peaks[0][0]), int(peaks[0][1] + 20)]]
+    # centerSide = [[int(humanCenter[0][0]), int(humanCenter[0][1] - 20)],
+    #               [int(humanCenter[0][0]), int(humanCenter[0][1] + 20)]]
+    # contours = np.array([handSide[0], handSide[1], centerSide[1], centerSide[0]])  # COL Row
+    # cv2.fillPoly(displayedScreen, pts=[contours], color=(255, 253, 209))
+    #
+    # # Left Hand
+    # handSide = [[int(peaks[1][0]), int(peaks[1][1] - 20)], [int(peaks[1][0]), int(peaks[1][1] + 20)]]
+    # contours = np.array([handSide[0], handSide[1], centerSide[1], centerSide[0]])  # COL Row
+    # cv2.fillPoly(displayedScreen, pts=[contours], color=(255, 253, 209))
+    #
+    # # Legs
+    # LegSide = [[int(peaks[2][0] - 30), int(peaks[2][1])], [int(peaks[2][0] + 30), int(peaks[2][1])]]
+    # centerSideHorizontal = [[int(humanCenter[0][0] - 30), int(humanCenter[0][1])],
+    #                         [int(humanCenter[0][0] + 30), int(humanCenter[0][1])]]
+    # contours = np.array([LegSide[0], LegSide[1], centerSideHorizontal[1], centerSideHorizontal[0]])  # COL Row
+    # cv2.fillPoly(displayedScreen, pts=[contours], color=(211, 218, 255))
+    # cv2.line(displayedScreen, (int(humanCenter[0][0]), int(humanCenter[0][1] + 20)),
+    #          (int(peaks[2][0]), int(peaks[2][1])), (0, 0, 0), 5)
+    #
+    # # Body
+    # headSide = [[int(peaks[3][0]-25), int(peaks[3][1])], [int(peaks[3][0]+25), int(peaks[3][1])]]
+    # contours = np.array([headSide[0], headSide[1], centerSideHorizontal[1], centerSideHorizontal[0]])  # COL Row
+    # cv2.fillPoly(displayedScreen, pts=[contours], color=(255, 221, 229))
+    #
+    # # Head
+    # FaceDiameter = 45
+    # FaceHeight = 30
+    # cv2.ellipse(displayedScreen, (int(peaks[3][0]), int(peaks[3][1])), (FaceDiameter, FaceHeight), 0, 0, 360, (255, 253, 209), -1)
+    # cv2.circle(displayedScreen, (int(peaks[3][0]-(FaceDiameter/2)), int(peaks[3][1])), 5, (0, 0, 0), -1)
+    # cv2.circle(displayedScreen, (int(peaks[3][0] + (FaceDiameter / 2)), int(peaks[3][1])), 5, (0, 0, 0), -1)
+    # cv2.line(displayedScreen, (int(peaks[3][0]+ (FaceDiameter / 2)), int(peaks[3][1] + (FaceHeight/2))),
+    #          (int(peaks[3][0]-(FaceDiameter / 2)), int(peaks[3][1]+(FaceHeight/2))), (0, 0, 0), 5)
+
+    # Head
+    cv2.circle(displayedScreen,(int(peaks[3][0]),int(peaks[3][1])), 5, (255,0,0), -1)
+    # Body
+    cv2.circle(displayedScreen, (int(humanCenter[0][0]), int(humanCenter[0][1])), 5, (255, 0, 0), -1)
+    # Right
+    cv2.circle(displayedScreen, (int(peaks[0][0]), int(peaks[0][1])), 5, (255, 0, 0), -1)
+    # Left
+    cv2.circle(displayedScreen, (int(peaks[1][0]), int(peaks[1][1])), 5, (255, 0, 0), -1)
+    # Leg
+    cv2.circle(displayedScreen, (int(peaks[2][0]), int(peaks[2][1])), 5, (255, 0, 0), -1)
+
+    # Head Body
+    cv2.line(displayedScreen,(int(peaks[3][0]),int(peaks[3][1])), (int(humanCenter[0][0]),int(humanCenter[0][1])),(255,0,0),5)
+    # Left Body
+    cv2.line(displayedScreen, (int(peaks[1][0]), int(peaks[1][1])), (int(humanCenter[0][0]), int(humanCenter[0][1])),(255,0,0),5)
+    # Right Body
+    cv2.line(displayedScreen, (int(peaks[0][0]), int(peaks[0][1])), (int(humanCenter[0][0]), int(humanCenter[0][1])),(255,0,0),5)
+    # Leg Body
+    cv2.line(displayedScreen, (int(peaks[2][0]), int(peaks[2][1])), (int(humanCenter[0][0]), int(humanCenter[0][1])),(255,0,0),5)
+
+
+    #right left leg head
+    cv2.imshow("DisplayedFigure", np.fliplr(displayedScreen))
+
+def showStage(images, t=0, score=0, result=0):
+    background = Imagee.open('stagebg.jpg')
+    for index, imageName in enumerate(images):
+        img = Imagee.open(imageName).convert("RGBA")
+        img = cv2.cvtColor(np.array(img), cv2.COLOR_BGRA2RGBA)
+        img = Imagee.fromarray(img)
+        background.paste(img, (60 + (240 * index), background.size[1] - img.size[1] - 70), img)
+    # background.show()
+    # background.close()
+
+    background = np.array(background)
+    if result == 1:  # Win
+        background[:, :, 1] = 255
+    elif result == 2:  # LOSE
+        background[:, :, 2] = 255
+    background = np.array(np.fliplr(background))
+    printOnScreen(background, t , score)
+
+    # background = cv2.resize(background,(0,0),fx=0.75, fy=0.75)  # TODO can comment it later
+    cv2.imshow("bg stage", background)
+
 
 ######################### Function Main Game #######################
 def main():
@@ -304,8 +433,8 @@ def main():
     cutOffFreq = 0.1
     diffThreshHoldConst =  0.8 #0.9
     blurFactor = 35 #15 #25
-    eriosionIterations = 0 #5
-    dilationIterations = 0
+    # eriosionIterations = 0 #5
+    # dilationIterations = 0
     minRatioInImg = 500  #1771 #2234 #100
     BackgroundExtraction = 1    # 0=temporal Difference. 1=background Extraction
     global debugMode
@@ -315,7 +444,10 @@ def main():
         plt.ion()
         plt.show()
 
-    fixedPeaks, fixedCenters = getFixedImagesPeaks(['fig.jpg'], 'bg.jpg', blurFactor, diffThreshHoldConst, cutOffFreq)
+    fixedPoses = np.array(sorted(glob.glob("Pictures/*")))
+
+    transparentPoses = np.array(sorted(glob.glob("Resized/*")))
+    fixedPeaks, fixedCenters = getFixedImagesPeaks(fixedPoses, 'bg.jpg', blurFactor, diffThreshHoldConst, cutOffFreq,drawImageinput=False)
 
     prevFrame = originalVid.copy()
     prevGrayImg = cv2.cvtColor(prevFrame, cv2.COLOR_BGR2GRAY)
@@ -323,6 +455,11 @@ def main():
     # bckExtractor=cv2.createBackgroundSubtractorMOG2()   # Remove Later if not used
 
     ################################### Frame Processing Starts ###################################
+    t0=time.time()
+    gameType=0
+    score = 0
+    initalized = False
+    cv2.destroyAllWindows()
     while ret:
         ############# Store Previous Frame #############
         if BackgroundExtraction != 1:
@@ -340,16 +477,100 @@ def main():
         grayImg = cv2.cvtColor(originalVid,cv2.COLOR_BGR2GRAY)
         blurredGrayImg = cv2.GaussianBlur(grayImg, (blurFactor, blurFactor), 0)
         peaks, humanCenter = getPeaks(blurredGrayImg, prevGrayImg, diffThreshHoldConst, originalVid, cutOffFreq, isVideoFrame=True)
+
+
         if peaks is not None and peaks.shape[0] >= 4:
-            if compare(peaks, humanCenter,fixedPeaks[0], fixedCenters[0]):
-                print("Matching!!")
-            else:
-                print("Not matching. :(")
+            drawFunction(originalVid, peaks, humanCenter)
+            # if compare(peaks, humanCenter,fixedPeaks[0], fixedCenters[0]):
+            #     print("Matching!!")
+            # else:
+            #     print("Not matching. :(")
             if (debugMode):
                 plt.draw()
                 plt.pause(0.001)
                 plt.gcf().clear()
                 cv2.imshow("6 Skeleton All Points", originalVid)
+
+
+        #################Game's logic#######################
+
+        currentTime = time.time()
+        timeDiff = currentTime - t0
+        displayTime = 10
+        hideTime = 2
+        resultTime = 2
+
+        if gameType == 0:  #Display All Mode
+
+            if not initalized:  #Initialize
+                chosenPoses = random.sample(range(len(fixedPoses)), 3)
+                hiddenPose = random.sample(chosenPoses, 1)
+                # For testing: hiddenPose=[imgIndex]
+
+                currentCenter = fixedCenters[hiddenPose[0]]
+                currentPeak = fixedPeaks[hiddenPose[0]]
+                initalized = True
+                t0 = time.time()
+                matching = 0
+            showStage(transparentPoses[chosenPoses] , displayTime-timeDiff , score) #TODO take timer
+            if timeDiff > displayTime:
+                cv2.destroyWindow('bg stage')
+                gameType = 1
+                t0 = time.time()
+                print('game type is', gameType)
+
+        elif gameType == 1:  # Hide All
+            showStage([] , hideTime-timeDiff , score)  #TODO take timer
+            if timeDiff > hideTime:
+                cv2.destroyWindow('bg stage')
+                gameType = 2
+                t0 = time.time()
+                print('game type is', gameType)
+                initalized = False
+
+        elif gameType == 2:  # Show 2 + Calculate score
+            if not initalized:
+                chosenPoses.remove(hiddenPose[0])
+                initalized = True
+                print([transparentPoses[hiddenPose[0]]])
+                getFixedImagesPeaks([fixedPoses[hiddenPose[0]]],'bg.jpg', blurFactor, diffThreshHoldConst, cutOffFreq)
+                # getPeaks(processedImage, background, diffThreshHoldConst, originalImage, cutOffFreq, isVideoFrame=True, index = -1)
+            showStage(transparentPoses[chosenPoses], displayTime-timeDiff , score)  #TODO take timer, Write on screen, WRITE SCORE TOO
+            if timeDiff > displayTime:
+                cv2.destroyWindow('bg stage')
+                gameType = 3
+                t0 = time.time()
+                print("game type is ", gameType)
+                cv2.destroyWindow("My Program"+str(False))
+
+            if peaks is not None and peaks.shape[0] >= 4:
+                peaks[2] =[0,0]
+                currentPeak[2] =[0,0]
+                if compare(peaks, humanCenter, currentPeak, currentCenter):
+                    print("Matching!!")
+                    matching +=1
+                    if matching >= 3:
+                        score += 1
+                        gameType=3
+                        cv2.destroyWindow('bg stage')
+                        t0 = time.time()
+                        print("game type is ", gameType)
+                        cv2.destroyWindow("My Program" + str(False))
+                else:  #TODO remove those 2 lines
+                    matching=0
+                    print("Not Matching")
+
+        elif gameType == 3:
+            if matching>=3:
+                showStage([transparentPoses[hiddenPose[0]]], score=score, result=1) #TODO write won
+            else:
+                showStage([transparentPoses[hiddenPose[0]]], score=score, result=2) #TODO write lose
+
+            if timeDiff > resultTime:
+                gameType = 0
+                initalized = False
+                t0 = time.time()
+        ##############################################
 
         if cv2.waitKey(1) == 27:
             break;
