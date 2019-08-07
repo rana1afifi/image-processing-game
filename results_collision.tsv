@@ -1,0 +1,3 @@
+#flows	rate (Mbps)	medianLat (ns)	stdevLat (ns)
+1	1000	4247	1083.0950378942
+30000	1000	4157	199.62377282037
